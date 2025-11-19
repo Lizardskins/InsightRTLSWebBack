@@ -13,6 +13,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import FormData from 'form-data';
 import Mailgun from 'mailgun.js';
+import axios from 'axios';
 
 dotenv.config();
 
@@ -41,6 +42,33 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
+async function sendMailgunEmail({ from, to, subject, html }) {
+    if (!process.env.MAILGUN_DOMAIN || !process.env.MAILGUN_API_KEY) {
+        throw new Error('Mailgun config missing (MAILGUN_DOMAIN or MAILGUN_API_KEY).');
+    }
+
+    const url = `https://api.mailgun.net/v3/${process.env.MAILGUN_DOMAIN}/messages`;
+
+    const params = new URLSearchParams();
+    params.append('from', from);
+    params.append('to', to);
+    params.append('subject', subject);
+    params.append('html', html);
+
+    const response = await axios.post(url, params.toString(), {
+        auth: {
+            username: 'api',
+            password: process.env.MAILGUN_API_KEY
+        },
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 10000
+    });
+
+    return response.data;
+}
+
 app.post('/api/contact', async (req, res) => {
     try {
         const { name, email, phone, company, message } = req.body || {};
@@ -54,58 +82,55 @@ app.post('/api/contact', async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid email address' });
         }
 
-        // Simple HTML templates
         const userHtml = `
-      <p>Hi ${name},</p>
-      <p>Thanks for contacting Insight RTLS — we've received your message and will respond shortly.</p>
-      <hr>
-      <p><strong>Message:</strong></p>
-      <p>${(message || '').replace(/\n/g, '<br>')}</p>
-    `;
+          <p>Hi ${name},</p>
+          <p>Thanks for contacting Insight RTLS — we've received your message and will respond shortly.</p>
+          <hr>
+          <p><strong>Message:</strong></p>
+          <p>${(message || '').replace(/\n/g, '<br>')}</p>
+        `;
 
         const adminHtml = `
-      <p>New contact form submission</p>
-      <ul>
-        <li><strong>Name:</strong> ${name}</li>
-        <li><strong>Email:</strong> ${email}</li>
-        ${phone ? `<li><strong>Phone:</strong> ${phone}</li>` : ''}
-        ${company ? `<li><strong>Company:</strong> ${company}</li>` : ''}
-      </ul>
-      <p>${(`<strong>Message:</strong> ${message}` || '').replace(/\n/g, '<br>')}</p>
-    `;
+          <p>New contact form submission</p>
+          <ul>
+            <li><strong>Name:</strong> ${name}</li>
+            <li><strong>Email:</strong> ${email}</li>
+            ${phone ? `<li><strong>Phone:</strong> ${phone}</li>` : ''}
+            ${company ? `<li><strong>Company:</strong> ${company}</li>` : ''}
+          </ul>
+          <p>${(`<strong>Message:</strong> ${message}` || '').replace(/\n/g, '<br>')}</p>
+        `;
 
-        // send to user (confirmation) and admin
-        // Ensure mailgun is configured
-        if (!mg) {
-            console.warn('Attempt to send contact message but Mailgun is not configured');
-            return res.status(503).json({ success: false, message: 'Email service not configured on server.' });
-        }
-
+        // Build a safe "from" address that matches your Mailgun domain
         const fromAddress =
             process.env.COMPANY_EMAIL ||
-            `Insight RTLS <noreply@${process.env.MAILGUN_DOMAIN}>`;
+            `Insight RTLS <postmaster@${process.env.MAILGUN_DOMAIN}>`;
 
-        console.log('Mailgun fromAddress:', JSON.stringify(fromAddress));
+        if (!fromAddress || !fromAddress.includes('@')) {
+            console.error('Invalid fromAddress, check COMPANY_EMAIL / MAILGUN_DOMAIN env vars');
+            return res.status(500).json({ success: false, message: 'Email configuration error.' });
+        }
 
-        await mg.messages.create(process.env.MAILGUN_DOMAIN, {
+        // Send confirmation to user
+        await sendMailgunEmail({
             from: fromAddress,
             to: email,
             subject: 'Thanks for contacting Insight RTLS',
             html: userHtml
         });
 
-        await mg.messages.create(process.env.MAILGUN_DOMAIN, {
+        // Send notification to you
+        await sendMailgunEmail({
             from: fromAddress,
             to: process.env.CONTACT_EMAIL,
             subject: `New contact from ${name}`,
-            html: adminHtml,
-            'h:Reply-To': email
+            html: adminHtml
         });
 
         console.log(`Contact form submitted: ${name} <${email}>`);
         res.json({ success: true });
     } catch (err) {
-        console.error('Contact error', err || err);
+        console.error('Contact error', err?.response?.data || err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
