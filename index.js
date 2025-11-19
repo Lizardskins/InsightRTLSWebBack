@@ -1,17 +1,7 @@
-/**
- * Insight RTLS Backend - index.js
- * Express server that handles contact form submissions and sends emails via Mailgun.
- *
- * Usage:
- * - Copy `backend.env.example` to `.env` and fill in values
- * - npm install
- * - npm start
- */
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { FormData } from 'undici';
+import formData from 'form-data';
 import Mailgun from 'mailgun.js';
 
 dotenv.config();
@@ -19,27 +9,27 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Mailgun client only if API key (and domain) are provided.
+// Mailgun client
+const mailgun = new Mailgun(formData);
 let mg = null;
+
 if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
     try {
-        const mailgun = new Mailgun(FormData);
-        mg = mailgun.client({ username: 'api', key: process.env.MAILGUN_API_KEY });
+        mg = mailgun.client({
+            username: 'api',
+            key: process.env.MAILGUN_API_KEY
+        });
     } catch (e) {
         console.warn('Failed to initialize Mailgun client:', e?.message || e);
         mg = null;
     }
 } else {
-    console.warn('MAILGUN_API_KEY or MAILGUN_DOMAIN not set — email sending is disabled.\n  Copy backend.env.example to .env and fill MAILGUN_API_KEY and MAILGUN_DOMAIN to enable Mailgun.');
+    console.warn('MAILGUN_API_KEY or MAILGUN_DOMAIN not set — email sending is disabled.');
 }
 
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
-});
 
 app.post('/api/contact', async (req, res) => {
     try {
@@ -52,6 +42,22 @@ app.post('/api/contact', async (req, res) => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(400).json({ success: false, message: 'Invalid email address' });
+        }
+
+        const fromAddress =
+            process.env.COMPANY_EMAIL ||
+            `Insight RTLS <noreply@${process.env.MAILGUN_DOMAIN}>`;
+
+        console.log('Mailgun fromAddress:', JSON.stringify(fromAddress));
+
+        if (!fromAddress || !fromAddress.includes('@')) {
+            console.error('Invalid fromAddress, check COMPANY_EMAIL / MAILGUN_DOMAIN env vars');
+            return res.status(500).json({ success: false, message: 'Email configuration error.' });
+        }
+
+        if (!mg) {
+            console.warn('Attempt to send contact message but Mailgun is not configured');
+            return res.status(503).json({ success: false, message: 'Email service not configured on server.' });
         }
 
         // Simple HTML templates
@@ -74,22 +80,15 @@ app.post('/api/contact', async (req, res) => {
       <p>${(`<strong>Message:</strong> ${message}` || '').replace(/\n/g, '<br>')}</p>
     `;
 
-        // send to user (confirmation) and admin
-        // Ensure mailgun is configured
-        if (!mg) {
-            console.warn('Attempt to send contact message but Mailgun is not configured');
-            return res.status(503).json({ success: false, message: 'Email service not configured on server.' });
-        }
-
         await mg.messages.create(process.env.MAILGUN_DOMAIN, {
-            from: `${process.env.COMPANY_EMAIL || 'noreply@insightrtls.com'}`,
+            from: fromAddress,
             to: email,
             subject: 'Thanks for contacting Insight RTLS',
             html: userHtml
         });
 
         await mg.messages.create(process.env.MAILGUN_DOMAIN, {
-            from: `${process.env.COMPANY_EMAIL || 'noreply@insightrtls.com'}`,
+            from: fromAddress,
             to: process.env.CONTACT_EMAIL,
             subject: `New contact from ${name}`,
             html: adminHtml,
@@ -99,11 +98,7 @@ app.post('/api/contact', async (req, res) => {
         console.log(`Contact form submitted: ${name} <${email}>`);
         res.json({ success: true });
     } catch (err) {
-        console.error('Contact error', err || err);
+        console.error('Contact error', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
-});
-
-app.listen(PORT, () => {
-    console.log(`Insight RTLS backend running on port ${PORT}`);
 });
