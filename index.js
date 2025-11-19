@@ -11,7 +11,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import FormData from 'form-data';
+import { FormData } from 'undici';
 import Mailgun from 'mailgun.js';
 
 dotenv.config();
@@ -71,7 +71,7 @@ app.post('/api/contact', async (req, res) => {
         ${phone ? `<li><strong>Phone:</strong> ${phone}</li>` : ''}
         ${company ? `<li><strong>Company:</strong> ${company}</li>` : ''}
       </ul>
-      <p>${(message || '').replace(/\n/g, '<br>')}</p>
+      <p>${(`<strong>Message:</strong> ${message}` || '').replace(/\n/g, '<br>')}</p>
     `;
 
         // send to user (confirmation) and admin
@@ -99,7 +99,7 @@ app.post('/api/contact', async (req, res) => {
         console.log(`Contact form submitted: ${name} <${email}>`);
         res.json({ success: true });
     } catch (err) {
-        console.error('Contact error', err?.message || err);
+        console.error('Contact error', err || err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
