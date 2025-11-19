@@ -11,7 +11,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { FormData } from 'form-data';
+import FormData from 'form-data';
 import Mailgun from 'mailgun.js';
 
 dotenv.config();
