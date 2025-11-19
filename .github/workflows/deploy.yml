@@ -1,0 +1,31 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run tests (none)
+        run: echo "No tests configured"
+
+      # Deploy to Azure Web App using publish profile
+      # Requires secret AZURE_WEBAPP_PUBLISH_PROFILE containing the publish profile XML
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: YOUR_AZURE_APP_NAME
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: '.'
